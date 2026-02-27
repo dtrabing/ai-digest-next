@@ -137,7 +137,7 @@ export default function Home() {
       setStatus('error')
       setStatusText('Error')
     }
-  }, [readStory, today])
+  }, [readStory])
 
   const fetchDates = useCallback(async () => {
     try {
