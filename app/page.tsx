@@ -48,29 +48,51 @@ export default function Home() {
   useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
   useEffect(() => { currentIdxRef.current = currentIdx }, [currentIdx])
 
+  const speakKeepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   const speak = useCallback((text: string, onEnd: () => void) => {
+    // Clear any existing keepalive
+    if (speakKeepaliveRef.current) { clearInterval(speakKeepaliveRef.current); speakKeepaliveRef.current = null }
     window.speechSynthesis.cancel()
-    const u = new SpeechSynthesisUtterance(text)
-    u.rate = RATE; u.pitch = 1.0; u.volume = 1.0
-    const voices = window.speechSynthesis.getVoices()
-    const v = voices.find(v =>
-      v.name.includes('Samantha') ||
-      v.name.includes('Google US English') ||
-      (v.lang === 'en-US' && v.localService)
-    )
-    if (v) u.voice = v
-    u.onend = () => { isSpeakingRef.current = false; onEnd() }
-    u.onerror = (e) => {
-      // 'interrupted' fires when we cancel() before starting the next — treat as normal end
-      if (e.error === 'interrupted' || e.error === 'canceled') { isSpeakingRef.current = false; return }
-      isSpeakingRef.current = false
-      isPlayingRef.current = false
-      setIsPlaying(false)
-      setStatus('paused')
-      setStatusText('Paused')
+
+    const doSpeak = () => {
+      const u = new SpeechSynthesisUtterance(text)
+      u.rate = RATE; u.pitch = 1.0; u.volume = 1.0
+      const voices = window.speechSynthesis.getVoices()
+      const v = voices.find(v =>
+        v.name.includes('Samantha') ||
+        v.name.includes('Google US English') ||
+        (v.lang === 'en-US' && v.localService)
+      )
+      if (v) u.voice = v
+
+      const cleanup = () => {
+        if (speakKeepaliveRef.current) { clearInterval(speakKeepaliveRef.current); speakKeepaliveRef.current = null }
+        isSpeakingRef.current = false
+      }
+      u.onend = () => { cleanup(); onEnd() }
+      u.onerror = (e) => {
+        if (e.error === 'interrupted' || e.error === 'canceled') { cleanup(); return }
+        cleanup()
+        isPlayingRef.current = false
+        setIsPlaying(false)
+        setStatus('paused')
+        setStatusText('Paused')
+      }
+
+      isSpeakingRef.current = true
+      window.speechSynthesis.speak(u)
+
+      // Chrome bug workaround: speechSynthesis stalls after ~15s without this
+      speakKeepaliveRef.current = setInterval(() => {
+        if (!window.speechSynthesis.speaking) { clearInterval(speakKeepaliveRef.current!); speakKeepaliveRef.current = null; return }
+        window.speechSynthesis.pause()
+        window.speechSynthesis.resume()
+      }, 10000)
     }
-    isSpeakingRef.current = true
-    window.speechSynthesis.speak(u)
+
+    // Small delay after cancel so Chrome doesn't drop the next utterance
+    setTimeout(doSpeak, 50)
   }, [])
 
   const readStory = useCallback((idx: number, stories: Story[]) => {
