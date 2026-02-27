@@ -275,7 +275,20 @@ export default function Home() {
               onClick={() => setModalIdx(i)}
             >
               <div className="card-top">
-                <span className="card-tag">{s.tag}</span>
+                <div className="card-top-left">
+                  <span className="card-tag">{s.tag}</span>
+                  {s.url && (
+                    <a
+                      className="card-source-link"
+                      href={s.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      &#8599;
+                    </a>
+                  )}
+                </div>
                 <span className="card-num">{String(i + 1).padStart(2, '0')}</span>
               </div>
               <div className="card-headline">{s.headline}</div>
