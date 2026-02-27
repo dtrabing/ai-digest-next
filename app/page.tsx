@@ -60,7 +60,15 @@ export default function Home() {
     )
     if (v) u.voice = v
     u.onend = () => { isSpeakingRef.current = false; onEnd() }
-    u.onerror = () => { isSpeakingRef.current = false; onEnd() }
+    u.onerror = (e) => {
+      // 'interrupted' fires when we cancel() before starting the next — treat as normal end
+      if (e.error === 'interrupted' || e.error === 'canceled') { isSpeakingRef.current = false; return }
+      isSpeakingRef.current = false
+      isPlayingRef.current = false
+      setIsPlaying(false)
+      setStatus('paused')
+      setStatusText('Paused')
+    }
     isSpeakingRef.current = true
     window.speechSynthesis.speak(u)
   }, [])
@@ -80,7 +88,7 @@ export default function Home() {
       if (isPlayingRef.current && !isPausedRef.current && !isAnsweringRef.current) {
         setTimeout(() => {
           if (isPlayingRef.current && !isPausedRef.current && !isAnsweringRef.current) {
-            const next = currentIdxRef.current + 1
+            const next = idx + 1
             currentIdxRef.current = next
             setCurrentIdx(next)
             readStory(next, stories)
