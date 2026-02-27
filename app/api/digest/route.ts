@@ -43,7 +43,16 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const dateKey = getDateKey(body.date)
 
-  const collection = await getDigestsCollection()
+  let collection
+  try {
+    collection = await getDigestsCollection()
+  } catch (dbErr) {
+    const msg = dbErr instanceof Error ? dbErr.message : 'DB connection failed'
+    return new Response(JSON.stringify({ error: `Database error: ${msg}` }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
 
   // Check MongoDB for existing digest for this date
   const existing = await collection.findOne({ date: dateKey })
