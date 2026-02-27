@@ -4,8 +4,8 @@ import { NextRequest } from 'next/server'
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 // In-memory cache — persists across requests on the same server instance
-const cache: { date: string; stories: unknown[] } | null = null
-const cacheRef = { current: cache }
+interface DigestCache { date: string; stories: unknown[] }
+const cacheRef: { current: DigestCache | null } = { current: null }
 
 function getTodayKey() {
   return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
