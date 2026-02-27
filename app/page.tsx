@@ -105,10 +105,15 @@ export default function Home() {
       })
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       const text = await res.text()
-      const parsed: Story[] = JSON.parse(text)
-      if (!Array.isArray(parsed) || !parsed.length) throw new Error('No stories returned')
+      const parsed = JSON.parse(text)
+      // Backend may return { error, raw } if parsing failed
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.error) {
+        throw new Error(parsed.error + (parsed.raw ? ': ' + parsed.raw : ''))
+      }
+      const stories: Story[] = parsed
+      if (!Array.isArray(stories) || !stories.length) throw new Error('No stories returned')
 
-      setStories(parsed)
+      setStories(stories)
       storyRefs.current = new Array(parsed.length).fill(null)
       isPlayingRef.current = true
       isPausedRef.current = false

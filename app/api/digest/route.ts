@@ -36,10 +36,23 @@ Respond ONLY with a valid JSON array, no markdown, no preamble, no trailing text
           .map(b => b.text)
           .join('')
 
-        const match = text.match(/\[[\s\S]*\]/)
-        if (!match) throw new Error('Could not parse news response')
+        // Strip markdown code fences if present, then extract JSON array
+        const stripped = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*/g, '')
+        const match = stripped.match(/\[[\s\S]*\]/)
+        if (!match) {
+          // Return raw text for debugging
+          controller.enqueue(encoder.encode(JSON.stringify({ error: 'Could not parse news response', raw: text.slice(0, 500) })))
+          return
+        }
 
-        controller.enqueue(encoder.encode(match[0]))
+        // Validate it parses correctly
+        const parsed = JSON.parse(match[0])
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+          controller.enqueue(encoder.encode(JSON.stringify({ error: 'Empty or invalid stories array' })))
+          return
+        }
+
+        controller.enqueue(encoder.encode(JSON.stringify(parsed)))
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error'
         controller.enqueue(encoder.encode(JSON.stringify({ error: msg })))
