@@ -101,22 +101,26 @@ async function fetchPastFromAlgolia(dateKey: string): Promise<HNStory[]> {
   return stories.sort((a, b) => b.score - a.score).slice(0, 12)
 }
 
-// Use Claude to write clean summaries for the fetched stories
-// Claude returns source_index (1-based) so we can reliably attach the original URL
+// Use Claude to write clean summaries — one entry per story, in the same order as input
+// URLs are attached from the original HNStory array by position, not by Claude
 async function summarizeStories(stories: HNStory[], dateKey: string): Promise<{ headline: string; tag: string; summary: string; url?: string }[]> {
-  const storiesList = stories
-    .map((s, i) => `${i + 1}. [${i + 1}] Title: ${s.title}\n   HN Score: ${s.score}${s.text ? `\n   Text: ${s.text.slice(0, 300)}` : ''}`)
+  // Take top 8 by score — Claude summarizes all of them in order, no selection needed
+  const top = stories.slice(0, 8)
+
+  const storiesList = top
+    .map((s, i) => `${i + 1}. ${s.title}${s.text ? `\n   Context: ${s.text.slice(0, 200)}` : ''}`)
     .join('\n\n')
 
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5',
     max_tokens: 2000,
-    system: `You are an AI news curator. Given a list of numbered Hacker News stories about AI from ${dateKey}, write clean digest entries for the top 6-8 most important ones.
-Respond ONLY with a valid JSON array, no markdown, no preamble. The "i" field must be the exact number in brackets from the input (e.g. 3 for "[3]"):
-[{"i":1,"headline":"Max 10 word punchy headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, plain English, no jargon."}]`,
+    system: `You are an AI news curator. Summarize each of the following Hacker News AI stories from ${dateKey}.
+Write one entry per story, in the SAME ORDER as the input. Do not skip, reorder, or add stories.
+Respond ONLY with a raw JSON array, no markdown fences, no preamble, no citations:
+[{"headline":"Max 10 word punchy headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Plain English, no jargon, no source citations."}]`,
     messages: [{
       role: 'user',
-      content: `Here are today's top AI stories from Hacker News. Pick the 6-8 most important and summarize them:\n\n${storiesList}`
+      content: `Summarize these ${top.length} AI stories in order:\n\n${storiesList}`
     }]
   })
 
@@ -132,15 +136,14 @@ Respond ONLY with a valid JSON array, no markdown, no preamble. The "i" field mu
   const parsed = JSON.parse(match[0])
   if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Empty summary array')
 
-  return parsed.map((item: { i?: number; headline: string; tag: string; summary: string }) => {
-    const src = typeof item.i === 'number' ? stories[item.i - 1] : undefined
-    return {
-      headline: item.headline,
-      tag: item.tag,
-      summary: item.summary,
-      url: src?.url ?? undefined
-    }
-  })
+  // Attach URLs by position — Claude preserves order, so index is reliable
+  return parsed.map((item: { headline: string; tag: string; summary: string }, idx: number) => ({
+    headline: item.headline,
+    tag: item.tag,
+    // Strip any <cite ...> tags Claude might still emit
+    summary: item.summary.replace(/<cite[^>]*>.*?<\/cite>/g, '').replace(/<[^>]+>/g, '').trim(),
+    url: top[idx]?.url ?? undefined
+  }))
 }
 
 export async function POST(req: NextRequest) {
