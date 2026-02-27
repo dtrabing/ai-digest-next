@@ -3,6 +3,14 @@ import { NextRequest } from 'next/server'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+// In-memory cache — persists across requests on the same server instance
+const cache: { date: string; stories: unknown[] } | null = null
+const cacheRef = { current: cache }
+
+function getTodayKey() {
+  return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+}
+
 async function fetchWithRetry(today: string, retries = 3): Promise<Anthropic.Message> {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
@@ -38,9 +46,14 @@ export async function POST(req: NextRequest) {
     return new Response('Unauthorized', { status: 401 })
   }
 
-  const today = new Date().toLocaleDateString('en-US', {
-    month: 'long', day: 'numeric', year: 'numeric'
-  })
+  const today = getTodayKey()
+
+  // Serve from cache if same day
+  if (cacheRef.current && cacheRef.current.date === today) {
+    return new Response(JSON.stringify(cacheRef.current.stories), {
+      headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' }
+    })
+  }
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
@@ -69,6 +82,8 @@ export async function POST(req: NextRequest) {
           return
         }
 
+        // Store in cache
+        cacheRef.current = { date: today, stories: parsed }
         controller.enqueue(encoder.encode(JSON.stringify(parsed)))
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error'
