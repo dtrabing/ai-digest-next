@@ -31,6 +31,7 @@ export default function Home() {
   const [asking, setAsking] = useState(false)
   const [storyQA, setStoryQA] = useState<Record<number, QAItem[]>>({})
   const [streamingAnswer, setStreamingAnswer] = useState<{ idx: number; text: string } | null>(null)
+  const [modalIdx, setModalIdx] = useState<number | null>(null)
 
   // Date navigation
   const [availableDates, setAvailableDates] = useState<string[]>([])
@@ -42,16 +43,22 @@ export default function Home() {
   const isPausedRef = useRef(false)
   const isAnsweringRef = useRef(false)
   const currentIdxRef = useRef(0)
-  const storyRefs = useRef<(HTMLDivElement | null)[]>([])
+  const modalQARef = useRef<HTMLDivElement>(null)
 
   // Keep refs in sync
   useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
   useEffect(() => { currentIdxRef.current = currentIdx }, [currentIdx])
 
+  // Scroll Q&A to bottom when new answers stream in
+  useEffect(() => {
+    if (modalQARef.current) {
+      modalQARef.current.scrollTop = modalQARef.current.scrollHeight
+    }
+  }, [streamingAnswer, storyQA])
+
   const speakKeepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const speak = useCallback((text: string, onEnd: () => void) => {
-    // Clear any existing keepalive
     if (speakKeepaliveRef.current) { clearInterval(speakKeepaliveRef.current); speakKeepaliveRef.current = null }
     window.speechSynthesis.cancel()
 
@@ -83,16 +90,14 @@ export default function Home() {
       isSpeakingRef.current = true
       window.speechSynthesis.speak(u)
 
-      // Chrome bug workaround: speechSynthesis stalls after ~15s without this
       speakKeepaliveRef.current = setInterval(() => {
         if (!window.speechSynthesis.speaking) { clearInterval(speakKeepaliveRef.current!); speakKeepaliveRef.current = null; return }
-        if (window.speechSynthesis.paused) return // don't resume if user paused
+        if (window.speechSynthesis.paused) return
         window.speechSynthesis.pause()
         window.speechSynthesis.resume()
       }, 10000)
     }
 
-    // Small delay after cancel so Chrome doesn't drop the next utterance
     setTimeout(doSpeak, 50)
   }, [])
 
@@ -133,6 +138,7 @@ export default function Home() {
     setStories([])
     setStoryQA({})
     setCurrentIdx(0)
+    setModalIdx(null)
     currentIdxRef.current = 0
 
     try {
@@ -151,7 +157,6 @@ export default function Home() {
       if (!Array.isArray(stories) || !stories.length) throw new Error('No stories returned')
 
       setStories(stories)
-      storyRefs.current = new Array(stories.length).fill(null)
       isPlayingRef.current = false
       isPausedRef.current = false
       setIsPlaying(false)
@@ -160,7 +165,6 @@ export default function Home() {
       setStatus('paused')
       setStatusText('Ready')
 
-      // Refresh available dates and get the canonical date label from server
       fetchDates()
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'Connection failed')
@@ -175,21 +179,15 @@ export default function Home() {
       if (!res.ok) return
       const dates: string[] = await res.json()
       setAvailableDates(dates)
-      if (dates.length > 0) setTodayLabel(dates[0]) // most recent = today
+      if (dates.length > 0) setTodayLabel(dates[0])
     } catch { /* silent */ }
   }, [])
 
-  // On mount: load dates then today's digest
   useEffect(() => {
     fetchDates()
     fetchDigest('today')
     setSelectedDate('today')
   }, []) // eslint-disable-line
-
-  // Scroll active story into view
-  useEffect(() => {
-    storyRefs.current[currentIdx]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [currentIdx])
 
   const handleDateChange = (date: string) => {
     setSelectedDate(date)
@@ -229,28 +227,38 @@ export default function Home() {
     isPlayingRef.current = true
     currentIdxRef.current = idx
     setCurrentIdx(idx)
+    setModalIdx(idx)
     setIsPlaying(true)
     setStatus('playing')
     setStatusText('Playing')
     readStory(idx, stories)
   }
 
-  const jumpToStory = (idx: number) => {
+  const openStory = (idx: number) => {
+    setModalIdx(idx)
+    setCurrentIdx(idx)
+    currentIdxRef.current = idx
+  }
+
+  const closeModal = () => {
+    setModalIdx(null)
+  }
+
+  const playFromModal = () => {
     window.speechSynthesis.cancel()
     isAnsweringRef.current = false
     isPausedRef.current = false
     isPlayingRef.current = true
-    currentIdxRef.current = idx
-    setCurrentIdx(idx)
     setIsPlaying(true)
     setStatus('playing')
     setStatusText('Playing')
-    readStory(idx, stories)
+    readStory(modalIdx!, stories)
   }
 
   const askQuestion = async () => {
     const q = question.trim()
     if (!q || asking) return
+    const idx = modalIdx !== null ? modalIdx : currentIdxRef.current
     setQuestion('')
     setAsking(true)
     window.speechSynthesis.cancel()
@@ -259,7 +267,6 @@ export default function Home() {
     setStatus('answering')
     setStatusText('Answering')
 
-    const idx = currentIdxRef.current
     const story = stories[idx]
     const priorQA = storyQA[idx] || []
 
@@ -312,10 +319,11 @@ export default function Home() {
       if (e.code === 'Space') { e.preventDefault(); togglePlay() }
       if (e.code === 'ArrowRight') goStory(1)
       if (e.code === 'ArrowLeft') goStory(-1)
+      if (e.code === 'Escape') closeModal()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [stories]) // eslint-disable-line
+  }, [stories, modalIdx]) // eslint-disable-line
 
   const isPulse = ['loading', 'playing', 'answering'].includes(status)
   const displayDate = selectedDate === 'today' ? (todayLabel || 'Today') : selectedDate
@@ -323,46 +331,40 @@ export default function Home() {
   const hasPrev = dateIdx < availableDates.length - 1
   const hasNext = dateIdx > 0
 
+  const activeModal = modalIdx !== null ? stories[modalIdx] : null
+  const modalQA = modalIdx !== null ? (storyQA[modalIdx] || []) : []
+  const modalStreaming = modalIdx !== null && streamingAnswer?.idx === modalIdx ? streamingAnswer.text : null
+
   return (
     <div className="app">
       <header>
         <div className="masthead">
           <h1>AI <span>DIGEST</span></h1>
-          <div className="subline">{displayDate.toUpperCase()}</div>
+        </div>
+        <div className="header-center">
+          <button
+            className="date-nav-btn"
+            onClick={() => handleDateChange(availableDates[dateIdx + 1])}
+            disabled={!hasPrev || availableDates.length <= 1}
+          >
+            &#9664;
+          </button>
+          <span className="date-nav-label">{displayDate.toUpperCase()}</span>
+          <button
+            className="date-nav-btn"
+            onClick={() => handleDateChange(dateIdx === 0 ? availableDates[1] : availableDates[dateIdx - 1])}
+            disabled={!hasNext || availableDates.length <= 1}
+          >
+            &#9654;
+          </button>
         </div>
         <div className="header-right">
           <div className={`status-badge ${status}`}>
             <div className={`dot${isPulse ? ' pulse' : ''}`} />
             <span>{statusText}</span>
           </div>
-          {stories.length > 0 && (
-            <div className="story-count">{stories.length} stories</div>
-          )}
         </div>
       </header>
-
-      {/* Date navigation */}
-      {availableDates.length > 1 && (
-        <div className="date-nav">
-          <button
-            className="date-nav-btn"
-            onClick={() => handleDateChange(availableDates[dateIdx + 1])}
-            disabled={!hasPrev}
-          >
-            &#9664; Prev
-          </button>
-          <span className="date-nav-label">
-            {selectedDate === 'today' ? 'Today' : selectedDate}
-          </span>
-          <button
-            className="date-nav-btn"
-            onClick={() => handleDateChange(dateIdx === 0 ? availableDates[1] : availableDates[dateIdx - 1])}
-            disabled={!hasNext}
-          >
-            Next &#9654;
-          </button>
-        </div>
-      )}
 
       {status === 'loading' && (
         <div className="loading-screen">
@@ -385,82 +387,98 @@ export default function Home() {
 
       {stories.length > 0 && (
         <>
-          <div>
-            {stories.map((s, i) => {
-              const isActive = i === currentIdx
-              const qa = storyQA[i] || []
-              const streaming = streamingAnswer?.idx === i ? streamingAnswer.text : null
+          {/* Playback strip */}
+          <div className="playback-strip">
+            <button className="btn-skip-sm" onClick={() => goStory(-1)}>&#9664;</button>
+            <button className="btn-play-sm" onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</button>
+            <button className="btn-skip-sm" onClick={() => goStory(1)}>&#9654;</button>
+            <div className="strip-title">{stories[currentIdx]?.headline ?? '—'}</div>
+            {done && <span className="strip-done">Done</span>}
+          </div>
 
+          {/* Story grid */}
+          <div className="story-grid">
+            {stories.map((s, i) => {
+              const isActive = i === currentIdx && isPlaying
               return (
                 <div
                   key={i}
-                  ref={el => { storyRefs.current[i] = el }}
-                  className={`story-item${isActive ? ' active' : ''}`}
-                  onClick={() => jumpToStory(i)}
+                  className={`card${isActive ? ' card-active' : ''}`}
+                  onClick={() => openStory(i)}
                 >
-                  <div className="story-meta">
-                    <span className="story-num">{String(i + 1).padStart(2, '0')}</span>
-                    <span className="story-tag">{s.tag}</span>
-                    <div className="story-playing-indicator">
-                      <div className="wave-bar" /><div className="wave-bar" /><div className="wave-bar" />
-                    </div>
+                  <div className="card-top">
+                    <span className="card-tag">{s.tag}</span>
+                    <span className="card-num">{String(i + 1).padStart(2, '0')}</span>
                   </div>
-                  <div className="story-headline">{s.headline}</div>
-                  {isActive && <div className="story-summary">{s.summary}</div>}
-                  {isActive && (qa.length > 0 || streaming !== null) && (
-                    <div className="qa-thread">
-                      {qa.map((item, j) => (
-                        <div key={j} className="qa-item">
-                          <div className="qa-q">{item.q}</div>
-                          <div className="qa-a">{item.a}</div>
-                        </div>
-                      ))}
-                      {streaming !== null && (
-                        <div className="qa-item">
-                          <div className="qa-q">{question || '…'}</div>
-                          <div className="qa-a streaming">{streaming || '…'}</div>
-                        </div>
-                      )}
+                  <div className="card-headline">{s.headline}</div>
+                  <div className="card-summary">{s.summary}</div>
+                  {isActive && (
+                    <div className="card-wave">
+                      <div className="wave-bar" /><div className="wave-bar" /><div className="wave-bar" />
                     </div>
                   )}
                 </div>
               )
             })}
           </div>
+        </>
+      )}
 
-          {done && (
-            <div className="done-card">
-              <div className="done-label">That&apos;s the digest.</div>
-              <div className="done-sub">Tap any story or ask a question below</div>
+      {/* Modal */}
+      {activeModal && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-meta">
+                <span className="card-tag">{activeModal.tag}</span>
+                <span className="modal-num">{String(modalIdx! + 1).padStart(2, '0')} / {stories.length}</span>
+              </div>
+              <button className="modal-close" onClick={closeModal}>&#10005;</button>
             </div>
-          )}
 
-          <div className="playback-bar">
-            <div className="playback-inner">
-              <div className="playback-controls">
-                <div className="now-playing">
-                  <div className="np-label">Now Playing</div>
-                  <div className="np-title">{stories[currentIdx]?.headline ?? '—'}</div>
-                </div>
-                <button className="btn-skip" onClick={() => goStory(-1)}>&#9664;</button>
-                <button className="btn-play" onClick={togglePlay}>{isPlaying ? '⏸' : '▶'}</button>
-                <button className="btn-skip" onClick={() => goStory(1)}>&#9654;</button>
+            <div className="modal-headline">{activeModal.headline}</div>
+            <div className="modal-summary">{activeModal.summary}</div>
+
+            <div className="modal-play-row">
+              <button className="btn-skip-sm" onClick={() => goStory(-1)}>&#9664;</button>
+              <button className="btn-play-md" onClick={modalIdx === currentIdx && isPlaying ? togglePlay : playFromModal}>
+                {modalIdx === currentIdx && isPlaying ? '⏸' : '▶'}
+              </button>
+              <button className="btn-skip-sm" onClick={() => goStory(1)}>&#9654;</button>
+            </div>
+
+            {(modalQA.length > 0 || modalStreaming !== null) && (
+              <div className="modal-qa" ref={modalQARef}>
+                {modalQA.map((item, j) => (
+                  <div key={j} className="qa-item">
+                    <div className="qa-q">{item.q}</div>
+                    <div className="qa-a">{item.a}</div>
+                  </div>
+                ))}
+                {modalStreaming !== null && (
+                  <div className="qa-item">
+                    <div className="qa-q">{question || '…'}</div>
+                    <div className="qa-a streaming">{modalStreaming || '…'}</div>
+                  </div>
+                )}
               </div>
-              <div className="question-row">
-                <input
-                  type="text"
-                  className="q-input"
-                  placeholder="Ask about this story…"
-                  maxLength={300}
-                  value={question}
-                  onChange={e => setQuestion(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') askQuestion() }}
-                />
-                <button className="btn-ask" onClick={askQuestion} disabled={asking}>Ask</button>
-              </div>
+            )}
+
+            <div className="modal-input-row">
+              <input
+                type="text"
+                className="q-input"
+                placeholder="Ask about this story…"
+                maxLength={300}
+                value={question}
+                onChange={e => setQuestion(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') askQuestion() }}
+                autoFocus
+              />
+              <button className="btn-ask" onClick={askQuestion} disabled={asking}>Ask</button>
             </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   )
