@@ -4,6 +4,20 @@ import { getDigestsCollection } from '@/lib/db'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+const AI_KEYWORDS = [
+  'ai', 'artificial intelligence', 'machine learning', 'deep learning',
+  'llm', 'gpt', 'claude', 'gemini', 'openai', 'anthropic', 'deepmind',
+  'neural', 'chatgpt', 'mistral', 'llama', 'diffusion', 'transformer',
+  'copilot', 'midjourney', 'stable diffusion', 'hugging face', 'nvidia',
+  'agi', 'alignment', 'reinforcement learning', 'fine-tun', 'inference',
+  'foundation model', 'multimodal', 'robotics', 'autonomous'
+]
+
+function isAIRelated(title: string): boolean {
+  const lower = title.toLowerCase()
+  return AI_KEYWORDS.some(kw => lower.includes(kw))
+}
+
 function getTodayKey() {
   return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
@@ -13,40 +27,110 @@ function getDateKey(date?: string) {
   return date
 }
 
-async function fetchWithRetry(dateKey: string, isToday: boolean, retries = 3): Promise<Anthropic.Message> {
-  const today = getTodayKey()
-  const systemPrompt = isToday
-    ? `You are an AI news curator. Today is ${today}.
-Search for the top 6-8 most important AI news stories from the last 48 hours. Cover: model releases, research breakthroughs, major company moves, policy/regulation, safety.
-Respond ONLY with a valid JSON array, no markdown, no preamble:
-[{"headline":"Max 10 word headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, no jargon."}]`
-    : `You are an AI news curator. Search for the top 6-8 most important AI news stories that were published on or around ${dateKey}. Cover: model releases, research breakthroughs, major company moves, policy/regulation, safety.
-Respond ONLY with a valid JSON array, no markdown, no preamble:
-[{"headline":"Max 10 word headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, no jargon."}]`
+interface HNStory {
+  title: string
+  url?: string
+  score: number
+  objectID?: string
+  text?: string
+}
 
-  const userMsg = isToday
-    ? 'Top AI news last 48 hours as JSON array.'
-    : `Top AI news from ${dateKey} as JSON array.`
+// Fetch today's top AI stories from HN top/best lists
+async function fetchTodayFromHN(): Promise<HNStory[]> {
+  const [topRes, bestRes] = await Promise.all([
+    fetch('https://hacker-news.firebaseio.com/v0/topstories.json'),
+    fetch('https://hacker-news.firebaseio.com/v0/beststories.json')
+  ])
+  const [topIds, bestIds]: number[][] = await Promise.all([topRes.json(), bestRes.json()])
 
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      return await client.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 2000,
-        tools: [{ type: 'web_search_20250305' as const, name: 'web_search' }],
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMsg }]
+  // Deduplicate and take top 80 from each list
+  const ids = [...new Set([...topIds.slice(0, 80), ...bestIds.slice(0, 80)])]
+
+  const stories = await Promise.all(
+    ids.map(id =>
+      fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`)
+        .then(r => r.json())
+        .catch(() => null)
+    )
+  )
+
+  return stories
+    .filter(s => s && s.title && s.score > 50 && isAIRelated(s.title))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 12)
+    .map(s => ({ title: s.title, url: s.url, score: s.score, text: s.text }))
+}
+
+// Fetch past date stories from Algolia HN search API
+async function fetchPastFromAlgolia(dateKey: string): Promise<HNStory[]> {
+  // Parse dateKey like "February 25, 2026" into a date range
+  const d = new Date(dateKey + ' 12:00:00')
+  const start = Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).getTime() / 1000)
+  const end = Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59).getTime() / 1000)
+
+  // Search for AI-related stories on that date
+  const queries = ['AI', 'artificial intelligence', 'LLM', 'OpenAI', 'machine learning']
+  const results = await Promise.all(
+    queries.map(q =>
+      fetch(
+        `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(q)}&tags=story&numericFilters=created_at_i>${start},created_at_i<${end},points>10&hitsPerPage=20`
+      )
+        .then(r => r.json())
+        .catch(() => ({ hits: [] }))
+    )
+  )
+
+  const seen = new Set<string>()
+  const stories: HNStory[] = []
+
+  for (const result of results) {
+    for (const hit of result.hits || []) {
+      if (!hit.title || seen.has(hit.objectID)) continue
+      if (!isAIRelated(hit.title)) continue
+      seen.add(hit.objectID)
+      stories.push({
+        title: hit.title,
+        url: hit.url,
+        score: hit.points || 0,
+        objectID: hit.objectID,
+        text: hit.story_text
       })
-    } catch (err: unknown) {
-      const isRateLimit = err instanceof Error && err.message.includes('rate_limit')
-      if (isRateLimit && attempt < retries - 1) {
-        await new Promise(r => setTimeout(r, 10000 * Math.pow(2, attempt)))
-        continue
-      }
-      throw err
     }
   }
-  throw new Error('Max retries exceeded')
+
+  return stories.sort((a, b) => b.score - a.score).slice(0, 12)
+}
+
+// Use Claude to write clean summaries for the fetched stories
+async function summarizeStories(stories: HNStory[], dateKey: string): Promise<{ headline: string; tag: string; summary: string }[]> {
+  const storiesList = stories
+    .map((s, i) => `${i + 1}. Title: ${s.title}\n   URL: ${s.url || 'N/A'}\n   HN Score: ${s.score}${s.text ? `\n   Text: ${s.text.slice(0, 300)}` : ''}`)
+    .join('\n\n')
+
+  const msg = await client.messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 2000,
+    system: `You are an AI news curator. Given a list of Hacker News stories about AI from ${dateKey}, write clean digest entries for the top 6-8 most important ones.
+Respond ONLY with a valid JSON array, no markdown, no preamble:
+[{"headline":"Max 10 word punchy headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, plain English, no jargon."}]`,
+    messages: [{
+      role: 'user',
+      content: `Here are today's top AI stories from Hacker News. Pick the 6-8 most important and summarize them:\n\n${storiesList}`
+    }]
+  })
+
+  const text = msg.content
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('')
+
+  const stripped = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*/g, '')
+  const match = stripped.match(/\[[\s\S]*\]/)
+  if (!match) throw new Error('Could not parse summary response')
+
+  const parsed = JSON.parse(match[0])
+  if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Empty summary array')
+  return parsed
 }
 
 export async function POST(req: NextRequest) {
@@ -69,7 +153,7 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // Check MongoDB for existing digest for this date
+  // Check MongoDB cache
   const existing = await collection.findOne({ date: dateKey })
   if (existing) {
     return new Response(JSON.stringify(existing.stories), {
@@ -84,30 +168,23 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        const response = await fetchWithRetry(dateKey, isToday)
+        // Step 1: Fetch from HN
+        const hnStories = isToday
+          ? await fetchTodayFromHN()
+          : await fetchPastFromAlgolia(dateKey)
 
-        const text = response.content
-          .filter(b => b.type === 'text')
-          .map(b => b.text)
-          .join('')
-
-        const stripped = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*/g, '')
-        const match = stripped.match(/\[[\s\S]*\]/)
-        if (!match) {
-          controller.enqueue(encoder.encode(JSON.stringify({ error: 'Could not parse news response', raw: text.slice(0, 500) })))
+        if (hnStories.length === 0) {
+          controller.enqueue(encoder.encode(JSON.stringify({ error: 'No AI stories found on HN for this date' })))
           return
         }
 
-        const parsed = JSON.parse(match[0])
-        if (!Array.isArray(parsed) || parsed.length === 0) {
-          controller.enqueue(encoder.encode(JSON.stringify({ error: 'Empty or invalid stories array' })))
-          return
-        }
+        // Step 2: Summarize with Claude
+        const summarized = await summarizeStories(hnStories, dateKey)
 
-        // Persist to MongoDB
-        await collection.insertOne({ date: dateKey, stories: parsed, createdAt: new Date() })
+        // Step 3: Persist to MongoDB
+        await collection.insertOne({ date: dateKey, stories: summarized, createdAt: new Date() })
 
-        controller.enqueue(encoder.encode(JSON.stringify(parsed)))
+        controller.enqueue(encoder.encode(JSON.stringify(summarized)))
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error'
         controller.enqueue(encoder.encode(JSON.stringify({ error: msg })))
