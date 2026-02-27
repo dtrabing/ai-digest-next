@@ -205,7 +205,15 @@ header {
   font-family: 'Lora', serif; font-size: 14px; font-style: italic;
   line-height: 1.75; color: var(--muted2); margin-bottom: 20px;
 }
-.modal-summary { margin-bottom: 20px; }
+.modal-summary { margin-bottom: 12px; }
+.modal-source-link {
+  display: inline-block; margin-bottom: 20px;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  color: var(--muted2); text-decoration: none; letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border); padding-bottom: 2px;
+  transition: color 0.2s, border-color 0.2s;
+}
+.modal-source-link:hover { color: var(--accent); border-color: var(--accent); }
 
 /* Q&A */
 .modal-qa { display: flex; flex-direction: column; gap: 16px; margin-bottom: 20px; }

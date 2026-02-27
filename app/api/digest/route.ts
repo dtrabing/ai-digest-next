@@ -102,7 +102,8 @@ async function fetchPastFromAlgolia(dateKey: string): Promise<HNStory[]> {
 }
 
 // Use Claude to write clean summaries for the fetched stories
-async function summarizeStories(stories: HNStory[], dateKey: string): Promise<{ headline: string; tag: string; summary: string }[]> {
+// Returns summaries with the source index so we can attach the original URL
+async function summarizeStories(stories: HNStory[], dateKey: string): Promise<{ headline: string; tag: string; summary: string; url?: string }[]> {
   const storiesList = stories
     .map((s, i) => `${i + 1}. Title: ${s.title}\n   URL: ${s.url || 'N/A'}\n   HN Score: ${s.score}${s.text ? `\n   Text: ${s.text.slice(0, 300)}` : ''}`)
     .join('\n\n')
@@ -111,8 +112,8 @@ async function summarizeStories(stories: HNStory[], dateKey: string): Promise<{ 
     model: 'claude-haiku-4-5',
     max_tokens: 2000,
     system: `You are an AI news curator. Given a list of Hacker News stories about AI from ${dateKey}, write clean digest entries for the top 6-8 most important ones.
-Respond ONLY with a valid JSON array, no markdown, no preamble:
-[{"headline":"Max 10 word punchy headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, plain English, no jargon."}]`,
+Respond ONLY with a valid JSON array, no markdown, no preamble. Include the source_index (1-based number from the input list) for each entry:
+[{"source_index":1,"headline":"Max 10 word punchy headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, plain English, no jargon."}]`,
     messages: [{
       role: 'user',
       content: `Here are today's top AI stories from Hacker News. Pick the 6-8 most important and summarize them:\n\n${storiesList}`
@@ -130,7 +131,17 @@ Respond ONLY with a valid JSON array, no markdown, no preamble:
 
   const parsed = JSON.parse(match[0])
   if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Empty summary array')
-  return parsed
+
+  // Attach the original URL using source_index
+  return parsed.map((item: { source_index?: number; headline: string; tag: string; summary: string }) => {
+    const src = stories[(item.source_index ?? 1) - 1]
+    return {
+      headline: item.headline,
+      tag: item.tag,
+      summary: item.summary,
+      url: src?.url
+    }
+  })
 }
 
 export async function POST(req: NextRequest) {

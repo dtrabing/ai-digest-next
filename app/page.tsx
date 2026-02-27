@@ -9,6 +9,7 @@ interface Story {
   headline: string
   tag: string
   summary: string
+  url?: string
 }
 
 interface QAItem {
@@ -301,6 +302,11 @@ export default function Home() {
 
             <div className="modal-headline">{activeModal.headline}</div>
             <div className="modal-summary">{activeModal.summary}</div>
+            {activeModal.url && (
+              <a className="modal-source-link" href={activeModal.url} target="_blank" rel="noopener noreferrer">
+                Read original &#8599;
+              </a>
+            )}
 
             {(modalQA.length > 0 || modalStreaming !== null) && (
               <div className="modal-qa" ref={modalQARef}>
