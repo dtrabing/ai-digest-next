@@ -12,6 +12,7 @@ declare global {
 const options = {
   serverSelectionTimeoutMS: 10000,
   connectTimeoutMS: 10000,
+  tls: true,
 }
 
 if (process.env.NODE_ENV === 'development') {
