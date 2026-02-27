@@ -32,16 +32,17 @@ export default function Home() {
   const [storyQA, setStoryQA] = useState<Record<number, QAItem[]>>({})
   const [streamingAnswer, setStreamingAnswer] = useState<{ idx: number; text: string } | null>(null)
 
+  // Date navigation
+  const [availableDates, setAvailableDates] = useState<string[]>([])
+  const [selectedDate, setSelectedDate] = useState<string>('')
+  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+
   const isSpeakingRef = useRef(false)
   const isPlayingRef = useRef(false)
   const isPausedRef = useRef(false)
   const isAnsweringRef = useRef(false)
   const currentIdxRef = useRef(0)
   const storyRefs = useRef<(HTMLDivElement | null)[]>([])
-
-  const dateStr = new Date().toLocaleDateString('en-US', {
-    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
-  }).toUpperCase()
 
   // Keep refs in sync
   useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
@@ -89,9 +90,14 @@ export default function Home() {
     })
   }, [speak])
 
-  const fetchDigest = useCallback(async () => {
+  const fetchDigest = useCallback(async (date?: string) => {
+    window.speechSynthesis.cancel()
+    isPlayingRef.current = false
+    isPausedRef.current = false
+    isAnsweringRef.current = false
+
     setStatus('loading')
-    setStatusText('Fetching news')
+    setStatusText(date && date !== today ? 'Loading archive' : 'Fetching news')
     setDone(false)
     setStories([])
     setStoryQA({})
@@ -101,12 +107,12 @@ export default function Home() {
     try {
       const res = await fetch('/api/digest', {
         method: 'POST',
-        headers: { 'x-digest-secret': SECRET }
+        headers: { 'Content-Type': 'application/json', 'x-digest-secret': SECRET },
+        body: JSON.stringify({ date: date || today })
       })
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       const text = await res.text()
       const parsed = JSON.parse(text)
-      // Backend may return { error, raw } if parsing failed
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.error) {
         throw new Error(parsed.error + (parsed.raw ? ': ' + parsed.raw : ''))
       }
@@ -114,7 +120,7 @@ export default function Home() {
       if (!Array.isArray(stories) || !stories.length) throw new Error('No stories returned')
 
       setStories(stories)
-      storyRefs.current = new Array(parsed.length).fill(null)
+      storyRefs.current = new Array(stories.length).fill(null)
       isPlayingRef.current = true
       isPausedRef.current = false
       setIsPlaying(true)
@@ -122,20 +128,42 @@ export default function Home() {
       currentIdxRef.current = 0
       setStatus('playing')
       setStatusText('Playing')
-      readStory(0, parsed)
+      readStory(0, stories)
+
+      // Refresh available dates after a successful fetch
+      fetchDates()
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'Connection failed')
       setStatus('error')
       setStatusText('Error')
     }
-  }, [readStory])
+  }, [readStory, today])
 
-  useEffect(() => { fetchDigest() }, [fetchDigest])
+  const fetchDates = useCallback(async () => {
+    try {
+      const res = await fetch('/api/dates', { headers: { 'x-digest-secret': SECRET } })
+      if (!res.ok) return
+      const dates: string[] = await res.json()
+      setAvailableDates(dates)
+    } catch { /* silent */ }
+  }, [])
+
+  // On mount: load dates then today's digest
+  useEffect(() => {
+    fetchDates()
+    fetchDigest(today)
+    setSelectedDate(today)
+  }, []) // eslint-disable-line
 
   // Scroll active story into view
   useEffect(() => {
     storyRefs.current[currentIdx]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [currentIdx])
+
+  const handleDateChange = (date: string) => {
+    setSelectedDate(date)
+    fetchDigest(date)
+  }
 
   const togglePlay = () => {
     if (!stories.length) return
@@ -209,10 +237,7 @@ export default function Home() {
     try {
       const res = await fetch('/api/ask', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-digest-secret': SECRET
-        },
+        headers: { 'Content-Type': 'application/json', 'x-digest-secret': SECRET },
         body: JSON.stringify({ question: q, headline: story.headline, summary: story.summary, priorQA })
       })
       if (!res.ok) throw new Error(`Server error ${res.status}`)
@@ -220,43 +245,32 @@ export default function Home() {
       const reader = res.body!.getReader()
       const decoder = new TextDecoder()
       let full = ''
-
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const chunk = decoder.decode(value)
-        full += chunk
+        full += decoder.decode(value)
         setStreamingAnswer({ idx, text: full })
       }
 
       setStreamingAnswer(null)
-      setStoryQA(prev => ({
-        ...prev,
-        [idx]: [...(prev[idx] || []), { q, a: full }]
-      }))
+      setStoryQA(prev => ({ ...prev, [idx]: [...(prev[idx] || []), { q, a: full }] }))
 
       speak(full, () => {
         isAnsweringRef.current = false
         setAsking(false)
         if (isPlayingRef.current) {
-          setStatus('playing')
-          setStatusText('Playing')
+          setStatus('playing'); setStatusText('Playing')
           readStory(currentIdxRef.current, stories)
         } else {
-          setStatus('paused')
-          setStatusText('Paused')
+          setStatus('paused'); setStatusText('Paused')
         }
       })
-    } catch (e) {
+    } catch {
       setStreamingAnswer(null)
-      setStoryQA(prev => ({
-        ...prev,
-        [idx]: [...(prev[idx] || []), { q, a: 'Something went wrong. Try again.' }]
-      }))
+      setStoryQA(prev => ({ ...prev, [idx]: [...(prev[idx] || []), { q, a: 'Something went wrong. Try again.' }] }))
       isAnsweringRef.current = false
       setAsking(false)
-      setStatus('paused')
-      setStatusText('Paused')
+      setStatus('paused'); setStatusText('Paused')
     }
   }
 
@@ -273,13 +287,17 @@ export default function Home() {
   }, [stories]) // eslint-disable-line
 
   const isPulse = ['loading', 'playing', 'answering'].includes(status)
+  const displayDate = selectedDate || today
+  const dateIdx = availableDates.indexOf(selectedDate)
+  const hasPrev = dateIdx < availableDates.length - 1
+  const hasNext = dateIdx > 0
 
   return (
     <div className="app">
       <header>
         <div className="masthead">
           <h1>AI <span>DIGEST</span></h1>
-          <div className="subline">{dateStr}</div>
+          <div className="subline">{displayDate.toUpperCase()}</div>
         </div>
         <div className="header-right">
           <div className={`status-badge ${status}`}>
@@ -287,17 +305,42 @@ export default function Home() {
             <span>{statusText}</span>
           </div>
           {stories.length > 0 && (
-            <div className="story-count">{stories.length} stories today</div>
+            <div className="story-count">{stories.length} stories</div>
           )}
         </div>
       </header>
+
+      {/* Date navigation */}
+      {availableDates.length > 1 && (
+        <div className="date-nav">
+          <button
+            className="date-nav-btn"
+            onClick={() => handleDateChange(availableDates[dateIdx + 1])}
+            disabled={!hasPrev}
+          >
+            &#9664; Prev
+          </button>
+          <span className="date-nav-label">
+            {selectedDate === today ? 'Today' : selectedDate}
+          </span>
+          <button
+            className="date-nav-btn"
+            onClick={() => handleDateChange(availableDates[dateIdx - 1])}
+            disabled={!hasNext}
+          >
+            Next &#9654;
+          </button>
+        </div>
+      )}
 
       {status === 'loading' && (
         <div className="loading-screen">
           <div className="load-animation">
             {[...Array(7)].map((_, i) => <div key={i} className="load-bar" />)}
           </div>
-          <div className="load-label">Scanning AI news…</div>
+          <div className="load-label">
+            {selectedDate && selectedDate !== today ? 'Loading archive…' : 'Scanning AI news…'}
+          </div>
         </div>
       )}
 
@@ -305,7 +348,7 @@ export default function Home() {
         <div className="error-screen">
           <div className="error-title">Failed to Load</div>
           <div className="error-msg">{errorMsg}</div>
-          <button className="btn-retry" onClick={fetchDigest}>Try Again</button>
+          <button className="btn-retry" onClick={() => fetchDigest(selectedDate)}>Try Again</button>
         </div>
       )}
 

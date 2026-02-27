@@ -1,13 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest } from 'next/server'
+import { getDigestsCollection } from '@/lib/db'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-// In-memory cache — persists across requests on the same server instance
-interface DigestCache { date: string; stories: unknown[] }
-const cacheRef: { current: DigestCache | null } = { current: null }
-
-function getTodayKey() {
+function getDateKey(date?: string) {
+  if (date) return date
   return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 }
 
@@ -22,15 +20,11 @@ async function fetchWithRetry(today: string, retries = 3): Promise<Anthropic.Mes
 Search for the top 6-8 most important AI news stories from the last 48 hours. Cover: model releases, research breakthroughs, major company moves, policy/regulation, safety.
 Respond ONLY with a valid JSON array, no markdown, no preamble:
 [{"headline":"Max 10 word headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, no jargon."}]`,
-        messages: [{
-          role: 'user',
-          content: 'Top AI news last 48 hours as JSON array.'
-        }]
+        messages: [{ role: 'user', content: 'Top AI news last 48 hours as JSON array.' }]
       })
     } catch (err: unknown) {
       const isRateLimit = err instanceof Error && err.message.includes('rate_limit')
       if (isRateLimit && attempt < retries - 1) {
-        // Exponential backoff: 10s, 20s, 40s
         await new Promise(r => setTimeout(r, 10000 * Math.pow(2, attempt)))
         continue
       }
@@ -46,12 +40,25 @@ export async function POST(req: NextRequest) {
     return new Response('Unauthorized', { status: 401 })
   }
 
-  const today = getTodayKey()
+  const body = await req.json().catch(() => ({}))
+  const dateKey = getDateKey(body.date)
 
-  // Serve from cache if same day
-  if (cacheRef.current && cacheRef.current.date === today) {
-    return new Response(JSON.stringify(cacheRef.current.stories), {
+  const collection = await getDigestsCollection()
+
+  // Check MongoDB for existing digest for this date
+  const existing = await collection.findOne({ date: dateKey })
+  if (existing) {
+    return new Response(JSON.stringify(existing.stories), {
       headers: { 'Content-Type': 'application/json', 'X-Cache': 'HIT' }
+    })
+  }
+
+  // Only fetch fresh data for today — don't fabricate past dates
+  const today = getDateKey()
+  if (dateKey !== today) {
+    return new Response(JSON.stringify({ error: `No digest found for ${dateKey}` }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' }
     })
   }
 
@@ -66,24 +73,22 @@ export async function POST(req: NextRequest) {
           .map(b => b.text)
           .join('')
 
-        // Strip markdown code fences if present, then extract JSON array
         const stripped = text.replace(/```(?:json)?\s*/g, '').replace(/```\s*/g, '')
         const match = stripped.match(/\[[\s\S]*\]/)
         if (!match) {
-          // Return raw text for debugging
           controller.enqueue(encoder.encode(JSON.stringify({ error: 'Could not parse news response', raw: text.slice(0, 500) })))
           return
         }
 
-        // Validate it parses correctly
         const parsed = JSON.parse(match[0])
         if (!Array.isArray(parsed) || parsed.length === 0) {
           controller.enqueue(encoder.encode(JSON.stringify({ error: 'Empty or invalid stories array' })))
           return
         }
 
-        // Store in cache
-        cacheRef.current = { date: today, stories: parsed }
+        // Persist to MongoDB
+        await collection.insertOne({ date: today, stories: parsed, createdAt: new Date() })
+
         controller.enqueue(encoder.encode(JSON.stringify(parsed)))
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Unknown error'
