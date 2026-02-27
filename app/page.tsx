@@ -86,6 +86,7 @@ export default function Home() {
       // Chrome bug workaround: speechSynthesis stalls after ~15s without this
       speakKeepaliveRef.current = setInterval(() => {
         if (!window.speechSynthesis.speaking) { clearInterval(speakKeepaliveRef.current!); speakKeepaliveRef.current = null; return }
+        if (window.speechSynthesis.paused) return // don't resume if user paused
         window.speechSynthesis.pause()
         window.speechSynthesis.resume()
       }, 10000)
