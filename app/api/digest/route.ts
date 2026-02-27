@@ -13,18 +13,29 @@ function getDateKey(date?: string) {
   return date
 }
 
-async function fetchWithRetry(today: string, retries = 3): Promise<Anthropic.Message> {
+async function fetchWithRetry(dateKey: string, isToday: boolean, retries = 3): Promise<Anthropic.Message> {
+  const today = getTodayKey()
+  const systemPrompt = isToday
+    ? `You are an AI news curator. Today is ${today}.
+Search for the top 6-8 most important AI news stories from the last 48 hours. Cover: model releases, research breakthroughs, major company moves, policy/regulation, safety.
+Respond ONLY with a valid JSON array, no markdown, no preamble:
+[{"headline":"Max 10 word headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, no jargon."}]`
+    : `You are an AI news curator. Search for the top 6-8 most important AI news stories that were published on or around ${dateKey}. Cover: model releases, research breakthroughs, major company moves, policy/regulation, safety.
+Respond ONLY with a valid JSON array, no markdown, no preamble:
+[{"headline":"Max 10 word headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, no jargon."}]`
+
+  const userMsg = isToday
+    ? 'Top AI news last 48 hours as JSON array.'
+    : `Top AI news from ${dateKey} as JSON array.`
+
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await client.messages.create({
         model: 'claude-haiku-4-5',
         max_tokens: 2000,
         tools: [{ type: 'web_search_20250305' as const, name: 'web_search' }],
-        system: `You are an AI news curator. Today is ${today}.
-Search for the top 6-8 most important AI news stories from the last 48 hours. Cover: model releases, research breakthroughs, major company moves, policy/regulation, safety.
-Respond ONLY with a valid JSON array, no markdown, no preamble:
-[{"headline":"Max 10 word headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, no jargon."}]`,
-        messages: [{ role: 'user', content: 'Top AI news last 48 hours as JSON array.' }]
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMsg }]
       })
     } catch (err: unknown) {
       const isRateLimit = err instanceof Error && err.message.includes('rate_limit')
@@ -66,20 +77,14 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  // Only fetch fresh data for today — don't fabricate past dates
   const today = getDateKey()
-  if (dateKey !== today) {
-    return new Response(JSON.stringify({ error: `No digest found for ${dateKey}` }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json' }
-    })
-  }
+  const isToday = dateKey === today
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        const response = await fetchWithRetry(today)
+        const response = await fetchWithRetry(dateKey, isToday)
 
         const text = response.content
           .filter(b => b.type === 'text')
@@ -100,7 +105,7 @@ export async function POST(req: NextRequest) {
         }
 
         // Persist to MongoDB
-        await collection.insertOne({ date: today, stories: parsed, createdAt: new Date() })
+        await collection.insertOne({ date: dateKey, stories: parsed, createdAt: new Date() })
 
         controller.enqueue(encoder.encode(JSON.stringify(parsed)))
       } catch (err) {
