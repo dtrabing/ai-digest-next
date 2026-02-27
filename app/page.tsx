@@ -96,13 +96,30 @@ export default function Home() {
 
   const handlePickerSubmit = () => {
     if (!pickerValue) return
-    // Convert YYYY-MM-DD to "Month Day, Year" format the server expects
     const d = new Date(pickerValue + 'T12:00:00')
     const label = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     setPickerValue('')
     setShowDatePicker(false)
     setSelectedDate(label)
     fetchDigest(label)
+  }
+
+  // Step back/forward by calendar day from the current displayed date
+  const stepDay = (dir: number) => {
+    const currentLabel = selectedDate === 'today' ? (todayLabel || getTodayLabel()) : selectedDate
+    const d = new Date(currentLabel + ' 12:00:00')
+    d.setDate(d.getDate() + dir)
+    const today = new Date()
+    today.setHours(23, 59, 59, 999)
+    if (d > today) return // can't go into the future
+    const label = d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    setSelectedDate(label)
+    setShowDatePicker(false)
+    fetchDigest(label)
+  }
+
+  function getTodayLabel() {
+    return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
   }
 
   const askQuestion = async () => {
@@ -161,9 +178,6 @@ export default function Home() {
   }, [showDatePicker])
 
   const displayDate = selectedDate === 'today' ? (todayLabel || 'Today') : selectedDate
-  const dateIdx = selectedDate === 'today' ? 0 : availableDates.indexOf(selectedDate)
-  const hasPrev = dateIdx < availableDates.length - 1
-  const hasNext = dateIdx > 0
 
   const activeModal = modalIdx !== null ? stories[modalIdx] : null
   const modalQA = modalIdx !== null ? (storyQA[modalIdx] || []) : []
@@ -176,11 +190,7 @@ export default function Home() {
           <h1>AI <span>DIGEST</span></h1>
         </div>
         <div className="header-center">
-          <button
-            className="date-nav-btn"
-            onClick={() => handleDateChange(availableDates[dateIdx + 1])}
-            disabled={!hasPrev || availableDates.length <= 1}
-          >
+          <button className="date-nav-btn" onClick={() => stepDay(-1)}>
             &#9664;
           </button>
           <button className="date-label-btn" onClick={() => setShowDatePicker(v => !v)}>
@@ -188,8 +198,8 @@ export default function Home() {
           </button>
           <button
             className="date-nav-btn"
-            onClick={() => handleDateChange(dateIdx === 0 ? availableDates[1] : availableDates[dateIdx - 1])}
-            disabled={!hasNext || availableDates.length <= 1}
+            onClick={() => stepDay(1)}
+            disabled={selectedDate === 'today' || displayDate === getTodayLabel()}
           >
             &#9654;
           </button>
