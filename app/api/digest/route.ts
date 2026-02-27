@@ -102,17 +102,18 @@ async function fetchPastFromAlgolia(dateKey: string): Promise<HNStory[]> {
 }
 
 // Use Claude to write clean summaries for the fetched stories
+// Claude returns source_index (1-based) so we can reliably attach the original URL
 async function summarizeStories(stories: HNStory[], dateKey: string): Promise<{ headline: string; tag: string; summary: string; url?: string }[]> {
   const storiesList = stories
-    .map((s, i) => `${i + 1}. Title: ${s.title}\n   URL: ${s.url || ''}\n   HN Score: ${s.score}${s.text ? `\n   Text: ${s.text.slice(0, 300)}` : ''}`)
+    .map((s, i) => `${i + 1}. [${i + 1}] Title: ${s.title}\n   HN Score: ${s.score}${s.text ? `\n   Text: ${s.text.slice(0, 300)}` : ''}`)
     .join('\n\n')
 
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5',
     max_tokens: 2000,
-    system: `You are an AI news curator. Given a list of Hacker News stories about AI from ${dateKey}, write clean digest entries for the top 6-8 most important ones.
-Respond ONLY with a valid JSON array, no markdown, no preamble. Copy the URL field exactly as given in the input for each story you select:
-[{"url":"https://...","headline":"Max 10 word punchy headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, plain English, no jargon."}]`,
+    system: `You are an AI news curator. Given a list of numbered Hacker News stories about AI from ${dateKey}, write clean digest entries for the top 6-8 most important ones.
+Respond ONLY with a valid JSON array, no markdown, no preamble. The "i" field must be the exact number in brackets from the input (e.g. 3 for "[3]"):
+[{"i":1,"headline":"Max 10 word punchy headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, plain English, no jargon."}]`,
     messages: [{
       role: 'user',
       content: `Here are today's top AI stories from Hacker News. Pick the 6-8 most important and summarize them:\n\n${storiesList}`
@@ -131,12 +132,15 @@ Respond ONLY with a valid JSON array, no markdown, no preamble. Copy the URL fie
   const parsed = JSON.parse(match[0])
   if (!Array.isArray(parsed) || parsed.length === 0) throw new Error('Empty summary array')
 
-  return parsed.map((item: { url?: string; headline: string; tag: string; summary: string }) => ({
-    headline: item.headline,
-    tag: item.tag,
-    summary: item.summary,
-    url: item.url || undefined
-  }))
+  return parsed.map((item: { i?: number; headline: string; tag: string; summary: string }) => {
+    const src = typeof item.i === 'number' ? stories[item.i - 1] : undefined
+    return {
+      headline: item.headline,
+      tag: item.tag,
+      summary: item.summary,
+      url: src?.url ?? undefined
+    }
+  })
 }
 
 export async function POST(req: NextRequest) {
