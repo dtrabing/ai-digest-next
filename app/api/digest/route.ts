@@ -3,6 +3,35 @@ import { NextRequest } from 'next/server'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+async function fetchWithRetry(today: string, retries = 3): Promise<Anthropic.Message> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await client.messages.create({
+        model: 'claude-haiku-4-20250514',
+        max_tokens: 2000,
+        tools: [{ type: 'web_search_20250305' as const, name: 'web_search' }],
+        system: `You are an AI news curator. Today is ${today}.
+Search for the top 6-8 most important AI news stories from the last 48 hours. Cover: model releases, research breakthroughs, major company moves, policy/regulation, safety.
+Respond ONLY with a valid JSON array, no markdown, no preamble:
+[{"headline":"Max 10 word headline","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2 sentences max. Conversational, no jargon."}]`,
+        messages: [{
+          role: 'user',
+          content: 'Top AI news last 48 hours as JSON array.'
+        }]
+      })
+    } catch (err: unknown) {
+      const isRateLimit = err instanceof Error && err.message.includes('rate_limit')
+      if (isRateLimit && attempt < retries - 1) {
+        // Exponential backoff: 10s, 20s, 40s
+        await new Promise(r => setTimeout(r, 10000 * Math.pow(2, attempt)))
+        continue
+      }
+      throw err
+    }
+  }
+  throw new Error('Max retries exceeded')
+}
+
 export async function POST(req: NextRequest) {
   const secret = req.headers.get('x-digest-secret')
   if (secret !== process.env.DIGEST_SECRET) {
@@ -17,19 +46,7 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        const response = await client.messages.create({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 4000,
-          tools: [{ type: 'web_search_20250305' as const, name: 'web_search' }],
-          system: `You are an AI news curator. Today is ${today}.
-Search for the most important AI news from the last 48 hours. Cover: model releases, research breakthroughs, major company moves, policy/regulation, safety, infrastructure. Include ALL stories that are genuinely important — usually 6–12. Skip minor or redundant items.
-Respond ONLY with a valid JSON array, no markdown, no preamble, no trailing text:
-[{"headline":"Short punchy headline max 12 words","tag":"Model|Research|Policy|Business|Safety|Infrastructure","summary":"2-3 sentences. Conversational tone. Written for audio — no jargon, no bullet points. Explain it like you're telling a smart friend."}]`,
-          messages: [{
-            role: 'user',
-            content: 'Give me the most important AI news from the last 48 hours as a JSON array.'
-          }]
-        })
+        const response = await fetchWithRetry(today)
 
         const text = response.content
           .filter(b => b.type === 'text')
