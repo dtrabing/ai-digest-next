@@ -121,14 +121,13 @@ export default function Home() {
 
       setStories(stories)
       storyRefs.current = new Array(stories.length).fill(null)
-      isPlayingRef.current = true
+      isPlayingRef.current = false
       isPausedRef.current = false
-      setIsPlaying(true)
+      setIsPlaying(false)
       setCurrentIdx(0)
       currentIdxRef.current = 0
-      setStatus('playing')
-      setStatusText('Playing')
-      readStory(0, stories)
+      setStatus('paused')
+      setStatusText('Ready')
 
       // Refresh available dates and get the canonical date label from server
       fetchDates()
