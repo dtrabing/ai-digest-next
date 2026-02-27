@@ -7,7 +7,7 @@ async function fetchWithRetry(today: string, retries = 3): Promise<Anthropic.Mes
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await client.messages.create({
-        model: 'claude-haiku-4-20250514',
+        model: 'claude-haiku-4-5',
         max_tokens: 2000,
         tools: [{ type: 'web_search_20250305' as const, name: 'web_search' }],
         system: `You are an AI news curator. Today is ${today}.
