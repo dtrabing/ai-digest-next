@@ -195,33 +195,6 @@ export default function Home() {
           </button>
         </div>
 
-        {showDatePicker && (
-          <div className="date-picker-dropdown" onClick={e => e.stopPropagation()}>
-            <div className="date-picker-title">Jump to date</div>
-            <div className="date-picker-input-row">
-              <input
-                type="date"
-                className="date-input"
-                value={pickerValue}
-                max={new Date().toISOString().split('T')[0]}
-                onChange={e => setPickerValue(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') handlePickerSubmit() }}
-                autoFocus
-              />
-              <button className="btn-go" onClick={handlePickerSubmit}>Go</button>
-            </div>
-            {availableDates.length > 0 && (
-              <div className="date-picker-history">
-                <div className="date-picker-history-label">Cached</div>
-                {availableDates.map(d => (
-                  <button key={d} className="date-history-item" onClick={() => handleDateChange(d)}>
-                    {d}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
         <div className="header-right">
           {loading && (
             <div className="status-badge loading">
@@ -234,6 +207,34 @@ export default function Home() {
           )}
         </div>
       </header>
+
+      {showDatePicker && (
+        <div className="date-picker-dropdown" onClick={e => e.stopPropagation()}>
+          <div className="date-picker-title">Jump to date</div>
+          <div className="date-picker-input-row">
+            <input
+              type="date"
+              className="date-input"
+              value={pickerValue}
+              max={new Date().toISOString().split('T')[0]}
+              onChange={e => setPickerValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handlePickerSubmit() }}
+              autoFocus
+            />
+            <button className="btn-go" onClick={handlePickerSubmit}>Go</button>
+          </div>
+          {availableDates.length > 0 && (
+            <div className="date-picker-history">
+              <div className="date-picker-history-label">Cached</div>
+              {availableDates.map(d => (
+                <button key={d} className="date-history-item" onClick={() => handleDateChange(d)}>
+                  {d}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {loading && (
         <div className="loading-screen">

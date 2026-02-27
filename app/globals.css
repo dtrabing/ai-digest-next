@@ -27,7 +27,7 @@ header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 28px; padding-bottom: 20px;
   border-bottom: 1px solid var(--border);
-  gap: 16px; position: relative;
+  gap: 16px;
 }
 .masthead h1 { font-family: 'Bebas Neue', sans-serif; font-size: 36px; letter-spacing: 2px; line-height: 1; }
 .masthead h1 span { color: var(--accent); }
@@ -56,9 +56,9 @@ header {
 }
 .date-label-btn:hover { color: var(--accent); }
 .date-picker-dropdown {
-  position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
   background: #1a1a1a; border: 1px solid #333; border-radius: 12px;
-  padding: 16px; min-width: 260px; z-index: 300; box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  padding: 16px; min-width: 280px; z-index: 300; box-shadow: 0 8px 32px rgba(0,0,0,0.8);
 }
 .date-picker-title { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
 .date-picker-input-row { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
