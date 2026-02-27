@@ -34,8 +34,8 @@ export default function Home() {
 
   // Date navigation
   const [availableDates, setAvailableDates] = useState<string[]>([])
-  const [selectedDate, setSelectedDate] = useState<string>('')
-  const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+  const [selectedDate, setSelectedDate] = useState<string>('today')
+  const [todayLabel, setTodayLabel] = useState<string>('')
 
   const isSpeakingRef = useRef(false)
   const isPlayingRef = useRef(false)
@@ -97,7 +97,7 @@ export default function Home() {
     isAnsweringRef.current = false
 
     setStatus('loading')
-    setStatusText(date && date !== today ? 'Loading archive' : 'Fetching news')
+    setStatusText(date && date !== 'today' ? 'Loading archive' : 'Fetching news')
     setDone(false)
     setStories([])
     setStoryQA({})
@@ -108,7 +108,7 @@ export default function Home() {
       const res = await fetch('/api/digest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-digest-secret': SECRET },
-        body: JSON.stringify({ date: date || today })
+        body: JSON.stringify({ date: date || 'today' })
       })
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       const text = await res.text()
@@ -130,7 +130,7 @@ export default function Home() {
       setStatusText('Playing')
       readStory(0, stories)
 
-      // Refresh available dates after a successful fetch
+      // Refresh available dates and get the canonical date label from server
       fetchDates()
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'Connection failed')
@@ -145,14 +145,15 @@ export default function Home() {
       if (!res.ok) return
       const dates: string[] = await res.json()
       setAvailableDates(dates)
+      if (dates.length > 0) setTodayLabel(dates[0]) // most recent = today
     } catch { /* silent */ }
   }, [])
 
   // On mount: load dates then today's digest
   useEffect(() => {
     fetchDates()
-    fetchDigest(today)
-    setSelectedDate(today)
+    fetchDigest('today')
+    setSelectedDate('today')
   }, []) // eslint-disable-line
 
   // Scroll active story into view
@@ -287,8 +288,8 @@ export default function Home() {
   }, [stories]) // eslint-disable-line
 
   const isPulse = ['loading', 'playing', 'answering'].includes(status)
-  const displayDate = selectedDate || today
-  const dateIdx = availableDates.indexOf(selectedDate)
+  const displayDate = selectedDate === 'today' ? (todayLabel || 'Today') : selectedDate
+  const dateIdx = selectedDate === 'today' ? 0 : availableDates.indexOf(selectedDate)
   const hasPrev = dateIdx < availableDates.length - 1
   const hasNext = dateIdx > 0
 
@@ -321,11 +322,11 @@ export default function Home() {
             &#9664; Prev
           </button>
           <span className="date-nav-label">
-            {selectedDate === today ? 'Today' : selectedDate}
+            {selectedDate === 'today' ? 'Today' : selectedDate}
           </span>
           <button
             className="date-nav-btn"
-            onClick={() => handleDateChange(availableDates[dateIdx - 1])}
+            onClick={() => handleDateChange(dateIdx === 0 ? availableDates[1] : availableDates[dateIdx - 1])}
             disabled={!hasNext}
           >
             Next &#9654;
@@ -339,7 +340,7 @@ export default function Home() {
             {[...Array(7)].map((_, i) => <div key={i} className="load-bar" />)}
           </div>
           <div className="load-label">
-            {selectedDate && selectedDate !== today ? 'Loading archive…' : 'Scanning AI news…'}
+            {selectedDate && selectedDate !== 'today' ? 'Loading archive…' : 'Scanning AI news…'}
           </div>
         </div>
       )}

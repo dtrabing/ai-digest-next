@@ -4,9 +4,13 @@ import { getDigestsCollection } from '@/lib/db'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-function getDateKey(date?: string) {
-  if (date) return date
+function getTodayKey() {
   return new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+}
+
+function getDateKey(date?: string) {
+  if (!date || date === 'today') return getTodayKey()
+  return date
 }
 
 async function fetchWithRetry(today: string, retries = 3): Promise<Anthropic.Message> {
