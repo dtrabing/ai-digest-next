@@ -1,0 +1,22 @@
+{
+  "name": "AI Digest",
+  "short_name": "AI Digest",
+  "description": "Daily AI news briefing with audio playback and Q&A",
+  "start_url": "/ai-digest/",
+  "display": "standalone",
+  "background_color": "#0c0c0c",
+  "theme_color": "#0c0c0c",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
